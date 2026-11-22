@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark">
+<title>複製座標</title>
+<style>
+  :root {
+    --bg: #070a1c;
+    --card: #04061a;
+    --line: #14183a;
+    --text: #f2f4ff;
+    --muted: #8d93b8;
+    --gold: #b8912a;
+    --green: #2f7d27;
+    --green-hover: #3a9530;
+    --ok: #1f9d55;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; }
+  body { padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    display: flex; justify-content: center; }
+  main { width: 100%; max-width: 440px; margin-top: 24px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 28px; padding: 28px 20px 24px; text-align: center; }
+  h1 { margin: 8px 0 0; font-size: 2rem; line-height: 1.15; font-weight: 800; overflow-wrap: anywhere; }
+  .dex { color: var(--gold); font-weight: 700; font-size: 1.1rem; margin-left: 6px; white-space: nowrap; }
+  .sprite { display: block; width: 190px; height: 190px; margin: 10px auto 6px; object-fit: contain; }
+  .sprite[hidden] { display: none; }
+  .info { margin: 4px 0 0; color: var(--muted); font-size: 1rem; line-height: 1.5; }
+  .info b { color: var(--text); }
+  .pvp { margin: 6px 0 0; color: #5fd68a; font-weight: 600; }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+    margin-top: 14px; padding: 18px 12px; border: 1px solid #3f8f37; border-radius: 999px;
+    background: var(--green); color: #fff; font: inherit; font-size: 1.35rem; font-weight: 700;
+    text-decoration: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .btn:active { background: var(--green-hover); transform: scale(.99); }
+  .btn.done { background: var(--ok); border-color: #2bc06b; }
+  .coord { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: #0b0f2a;
+    border: 1px dashed var(--line); font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 1rem; user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
+  .hint { min-height: 1.2em; margin: 6px 0 0; color: #ffb4a8; font-size: .85rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 18px; }
+  .chip { padding: 9px 14px; border: 1px solid var(--line); border-radius: 14px;
+    background: #080b22; color: var(--text); font-size: 1rem; }
+  .chip.expired { color: #ff8f80; }
+  .error { color: #ff8f80; margin: 18px 0 8px; font-size: 1.1rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span id="name">座標</span><span class="dex" id="dex" hidden></span></h1>
+  <img class="sprite" id="sprite" alt="" hidden>
+  <p class="info" id="info" hidden></p>
+  <p class="pvp" id="pvp" hidden></p>
+
+  <p class="error" id="error" hidden>網址中的座標無效</p>
+
+  <div id="actions" hidden>
+    <button class="btn" id="copy" type="button">📍 Copy GPS</button>
+    <a class="btn" id="maps" target="_blank" rel="noopener noreferrer">Google Maps</a>
+    <p class="coord" id="coord"></p>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <div class="chips">
+    <span class="chip" id="left" hidden></span>
+    <span class="chip" id="despawn" hidden></span>
+    <span class="chip" id="site" hidden></span>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var q = new URLSearchParams(location.search);
+
+  // ---- 座標驗證 (只接受 lat,lng 數字,避免亂塞內容進連結) ----
+  var m = (q.get("c") || "").trim().match(/^(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  var lat = m ? parseFloat(m[1]) : NaN, lng = m ? parseFloat(m[2]) : NaN;
+  var valid = m && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
+  // ---- 其他欄位 (一律用 textContent,不會當成 HTML) ----
+  var name = (q.get("n") || "").slice(0, 60);
+  if (name) { $("name").textContent = name; document.title = name + " · 座標"; }
+
+  var id = parseInt(q.get("id"), 10);
+  if (id > 0 && id < 5000) {
+    $("dex").textContent = "#" + String(id).padStart(3, "0");
+    $("dex").hidden = false;
+    var img = $("sprite");
+    img.onerror = function () { img.hidden = true; };
+    img.onload = function () { img.hidden = false; };
+    img.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/" + id + ".png";
+  }
+
+  var parts = [];
+  var iv = q.get("iv") || "";
+  if (/^\d{1,2}\/\d{1,2}\/\d{1,2}$/.test(iv)) {
+    var n = iv.split("/").map(Number);
+    parts.push("IV <b>" + n.join("/") + "</b> (" + Math.round((n[0] + n[1] + n[2]) / 45 * 100) + "%)");
+  }
+  var lv = parseInt(q.get("l"), 10), cp = parseInt(q.get("cp"), 10);
+  if (lv > 0 && lv < 100) parts.push("Lv " + lv);
+  if (cp > 0 && cp < 100000) parts.push("CP " + cp);
+  if (parts.length) { $("info").innerHTML = parts.join(" · "); $("info").hidden = false; }
+
+  var pvp = (q.get("p") || "").slice(0, 80);
+  if (pvp) { $("pvp").textContent = "PvP: " + pvp; $("pvp").hidden = false; }
+
+  var site = (q.get("s") || "").slice(0, 20);
+  if (site) { $("site").textContent = "🌎 " + site; $("site").hidden = false; }
+
+  // ---- 按鈕 ----
+  if (!valid) {
+    $("error").hidden = false;
+  } else {
+    var text = lat.toFixed(6) + "," + lng.toFixed(6);
+    $("coord").textContent = text;
+    $("maps").href = "https://www.google.com/maps?q=" + encodeURIComponent(text);
+    $("actions").hidden = false;
+
+    var btn = $("copy"), timer = null;
+    btn.addEventListener("click", function () {
+      copyText(text).then(function (ok) {
+        clearTimeout(timer);
+        if (ok) {
+          btn.textContent = "✓ 已複製";
+          btn.classList.add("done");
+          $("hint").textContent = "";
+        } else {
+          selectCoord();
+          $("hint").textContent = "無法自動複製,座標已選取,請長按後選「拷貝」";
+        }
+        timer = setTimeout(function () {
+          btn.textContent = "📍 Copy GPS";
+          btn.classList.remove("done");
+        }, 2000);
+      });
+    });
+  }
+
+  function selectCoord() {
+    var r = document.createRange();
+    r.selectNodeContents($("coord"));
+    var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+
+  function copyText(t) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(t).then(function () { return true; },
+                                                   function () { return legacyCopy(t); });
+    }
+    return Promise.resolve(legacyCopy(t));
+  }
+
+  function legacyCopy(t) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = t; ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
+      document.body.appendChild(ta);
+      ta.select(); ta.setSelectionRange(0, t.length);
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  // ---- 消失倒數 ----
+  var d = parseInt(q.get("d"), 10);
+  if (d > 1e9) {
+    var end = d * 1000;
+    $("despawn").textContent = "🎯 " + new Date(end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " 消失";
+    $("despawn").hidden = false;
+    $("left").hidden = false;
+    var tick = function () {
+      var s = Math.round((end - Date.now()) / 1000);
+      if (s <= 0) {
+        $("left").textContent = "⌛ 已消失";
+        $("left").classList.add("expired");
+        return false;
+      }
+      $("left").textContent = "⌛ " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+      return true;
+    };
+    if (tick()) { var iid = setInterval(function () { if (!tick()) clearInterval(iid); }, 1000); }
+  }
+})();
+</script>
+</body>
+</html>
